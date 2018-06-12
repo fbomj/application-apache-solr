@@ -1,0 +1,391 @@
+#!/usr/bin/perl
+#
+# Copyright (C) 2003-2018 Opsview Limited. All rights reserved
+#  
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+# 
+#    http://www.apache.org/licenses/LICENSE-2.0
+# 
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Solr Plugin for use with Opsview.
+
+use warnings;
+use strict;
+use lib "/usr/local/nagios/perl/lib", "/usr/local/nagios/lib";
+use LWP::UserAgent;
+use Monitoring::Plugin qw(OK UNKNOWN %ERRORS %STATUS_TEXT);
+use JSON;
+
+#SystemMemory
+#SystemSwap
+#SystemLoadAverage
+#JVMMemory
+
+my $CheckList =
+  "SystemMemory - Provides Total Physical Memory, Physical Memory Used and Percentage Used. Warning and critical are run against the Percentage Used.
+SystemSwap - Provides Total Swap, Swap Used and Percentage Used. Warning and critical are run against the Percentage Used.
+Uptime - Provides uptime, performance data is agianst the JVM uptime. No Warning or Critical
+SystemLoadAverage - Provides Load averages. No Warning or Critical
+JVMMemory - Total Memory, Memory Used and Percentage Used. Warning and critical are run against the Percentage Used.";
+
+#Create nagios plugin
+my $np = Monitoring::Plugin->new(
+    shortname => "Solr",
+    usage =>
+      "Usage: \"%s -l=<Check> -w <Warning> -c <Critical>\" Checks can be found in the help section",
+    blurb => "Check for Solr status\n\n$CheckList",
+    extra => "NONE",
+);
+
+#Arguments
+$np->add_arg(
+    spec     => 'check|l=s',
+    help     => '-l=test',
+    required => 0,
+);
+$np->add_arg(
+    spec => "url_prefix|H=s",
+    help =>
+      "--url-prefix=URL. URL prefix for API access. If not specified http://127.0.0.1 will be used",
+);
+$np->add_arg(
+    spec => "port|p=s",
+    help =>
+      "--port=PORT. Port for API access. If not specified default port 8983 will be used",
+);
+$np->add_arg(
+    spec => "critical|c=s",
+    help => "--critical=RANGE | -c If below this value raise a CRITICAL",
+);
+$np->add_arg(
+    spec => "warning|w=s",
+    help => "--warning=RANGE | -w If below this value raise a WARNING",
+);
+$np->getopts;
+
+my $Check      = $np->opts->check      || "SystemMemory";
+my $url_prefix = $np->opts->url_prefix || "http://127.0.0.1";
+if ( $url_prefix !~ m'^https?://' )
+{ #if no http:// or https:// add it on
+    $url_prefix = "http://$url_prefix";
+}
+my $port     = $np->opts->port     || 8983;
+my $warning  = $np->opts->warning  || 0;
+my $critical = $np->opts->critical || 0;
+
+unless ($Check) {
+    $np->nagios_die(
+        "Missing argument: Check (-l) The following checks are availible: \n\n$CheckList"
+    );
+}
+if ( $np->opts->critical && $np->opts->warning ) {
+    if ( $np->opts->critical < $np->opts->warning ) {
+        $np->nagios_die( "warning can not be more than critical" );
+    }
+}
+
+if ( $Check eq 'SystemMemory' ) {
+    SystemMemory();
+}
+elsif ( $Check eq 'SystemSwap' ) {
+    SystemSwap();
+}
+elsif ( $Check eq 'Uptime' ) {
+    Uptime();
+}
+elsif ( $Check eq 'SystemLoadAverage' ) {
+    SystemLoadAverage();
+}
+elsif ( $Check eq 'JVMMemory' ) {
+    JVMMemory();
+}
+else {
+    $np->nagios_die(
+        "Invalid check argument: Check (-l) The following checks are availible: \n\n$CheckList"
+    );
+
+}
+
+sub SystemMemory {
+    my $JSONObj = APIContent( '/solr/admin/info/system?wt=json' );
+    my %ReturnPerf;
+    my ( $MemSize, $MemUnits ) =
+      DecodeSize( $JSONObj->{'system'}{'totalPhysicalMemorySize'} );
+    $ReturnPerf{'label'} = "TotalSystemMemory";
+    $ReturnPerf{'value'} = sprintf( "%.2f",
+        ( ( $JSONObj->{'system'}{'totalPhysicalMemorySize'} / 1024 ) / 1024 )
+    );
+    $ReturnPerf{'uom'} = 'MB';
+    $np->add_perfdata( %ReturnPerf );
+    my ( $UsedMemSize, $UsedMemUnits ) = DecodeSize(
+        (
+                $JSONObj->{'system'}{'totalPhysicalMemorySize'}
+              - $JSONObj->{'system'}{'freePhysicalMemorySize'}
+        )
+    );
+    $ReturnPerf{'label'} = "SystemMemoryUsed";
+    $ReturnPerf{'value'} = sprintf(
+        "%.2f",
+        (
+            (
+                (
+                        $JSONObj->{'system'}{'totalPhysicalMemorySize'}
+                      - $JSONObj->{'system'}{'freePhysicalMemorySize'}
+                ) / 1024
+            ) / 1024
+        )
+    );
+    $ReturnPerf{'uom'} = 'MB';
+    $np->add_perfdata( %ReturnPerf );
+    my $MemPercent = sprintf(
+        "%.2f",
+        (
+            (
+                (
+                        $JSONObj->{'system'}{'totalPhysicalMemorySize'}
+                      - $JSONObj->{'system'}{'freePhysicalMemorySize'}
+                ) / ( $JSONObj->{'system'}{'totalPhysicalMemorySize'} )
+            ) * 100
+        )
+    );
+    $ReturnPerf{'label'} = "PercentUsed";
+    $ReturnPerf{'value'} = $MemPercent;
+    $ReturnPerf{'uom'}   = '%';
+    $np->add_perfdata( %ReturnPerf );
+
+    my $NagReturn = "OK";
+    if ($warning) {
+        if ( $MemPercent > $warning ) {
+            $NagReturn = "WARNING";
+        }
+    }
+    if ($critical) {
+        if ( $MemPercent > $critical ) {
+            $NagReturn = "CRITICAL";
+        }
+    }
+
+    $np->nagios_exit(
+        $NagReturn,
+        "Total Physical Memory $MemSize $MemUnits, Physical Memory Used $UsedMemSize $UsedMemUnits, Percentage Used $MemPercent\%"
+    );
+}
+
+sub SystemSwap {
+    my $JSONObj = APIContent( '/solr/admin/info/system?wt=json' );
+    my %ReturnPerf;
+    my ( $MemSize, $MemUnits ) =
+      DecodeSize( $JSONObj->{'system'}{'totalSwapSpaceSize'} );
+    $ReturnPerf{'label'} = "TotalSwap";
+    $ReturnPerf{'value'} = sprintf( "%.2f",
+        ( ( $JSONObj->{'system'}{'totalSwapSpaceSize'} / 1024 ) / 1024 )
+    );
+    $ReturnPerf{'uom'} = 'MB';
+    $np->add_perfdata( %ReturnPerf );
+    my ( $UsedMemSize, $UsedMemUnits ) = DecodeSize(
+        (
+                $JSONObj->{'system'}{'totalSwapSpaceSize'}
+              - $JSONObj->{'system'}{'freeSwapSpaceSize'}
+        )
+    );
+    $ReturnPerf{'label'} = "SwapUsed";
+    $ReturnPerf{'value'} = sprintf(
+        "%.2f",
+        (
+            (
+                (
+                        $JSONObj->{'system'}{'totalSwapSpaceSize'}
+                      - $JSONObj->{'system'}{'freeSwapSpaceSize'}
+                ) / 1024
+            ) / 1024
+        )
+    );
+    $ReturnPerf{'uom'} = 'MB';
+    $np->add_perfdata( %ReturnPerf );
+    my $MemPercent;
+
+    if ( $JSONObj->{'system'}{'freeSwapSpaceSize'} )
+    { #Avoid devide by zero error
+        $MemPercent = sprintf(
+            "%.2f",
+            (
+                (
+                    (
+                            $JSONObj->{'system'}{'totalSwapSpaceSize'}
+                          - $JSONObj->{'system'}{'freeSwapSpaceSize'}
+                    ) / ( $JSONObj->{'system'}{'freeSwapSpaceSize'} )
+                ) * 100
+            )
+        );
+    }
+    else {
+        $MemPercent = 0;
+    }
+    $ReturnPerf{'label'} = "PercentUsed";
+    $ReturnPerf{'value'} = $MemPercent;
+    $ReturnPerf{'uom'}   = '%';
+    $np->add_perfdata( %ReturnPerf );
+
+    my $NagReturn = "OK";
+    if ($warning) {
+        if ( $MemPercent > $warning ) {
+            $NagReturn = "WARNING";
+        }
+    }
+    if ($critical) {
+        if ( $MemPercent > $critical ) {
+            $NagReturn = "CRITICAL";
+        }
+    }
+
+    $np->nagios_exit(
+        $NagReturn,
+        "Total Swap $MemSize $MemUnits, Swap Used $UsedMemSize $UsedMemUnits, Percentage Used $MemPercent\%"
+    );
+}
+
+sub Uptime {
+    my $JSONObj = APIContent( '/solr/admin/info/system?wt=json' );
+    my %ReturnPerf;
+    my $Uptime;
+    if ( $JSONObj->{'system'}{'uptime'} =~ m/up (.*)(\d+) users/ ) {
+        $Uptime = $1;
+    }
+    else {
+        $Uptime = "Uptime not found";
+    }
+    $ReturnPerf{'label'} = "Uptime";
+    $ReturnPerf{'value'} = $JSONObj->{'jvm'}{'jmx'}{'upTimeMS'};
+    $ReturnPerf{'uom'}   = 'ms';
+    $np->add_perfdata( %ReturnPerf );
+
+    $np->nagios_exit( "OK", "Uptime $Uptime" );
+}
+
+sub SystemLoadAverage {
+    my $JSONObj = APIContent( '/solr/admin/info/system?wt=json' );
+    my %ReturnPerf;
+    my @Load;
+    if ( $JSONObj->{'system'}{'uptime'} =~ m/ load average: ([^,]+), ([^,]+), (.+)/ )
+    {
+        $Load[0] = $1;
+        $Load[1] = $2;
+        $Load[2] = $3;
+    }
+    else {
+        $np->nagios_die( "Load average not found " );
+    }
+    my $i = 1;
+    foreach (@Load) {
+        $ReturnPerf{'label'} = "Load average $i";
+        $ReturnPerf{'value'} = $_;
+        $ReturnPerf{'uom'}   = 'Load';
+        $np->add_perfdata( %ReturnPerf );
+        $i++;
+    }
+
+    $np->nagios_exit( "OK", "Load average: $Load[0], $Load[1], $Load[2]" );
+}
+
+sub JVMMemory {
+    my $JSONObj = APIContent( '/solr/admin/info/system?wt=json' );
+    my %ReturnPerf;
+    my ( $MemSize, $MemUnits );
+    if ( $JSONObj->{'jvm'}{'memory'}{'total'} =~ m/([^ ]+) (.+)/ ) {
+        ( $MemSize, $MemUnits ) = ( $1, $2 );
+    }
+    else {
+        $np->nagios_die( "JVM Memory not found" );
+    }
+    $ReturnPerf{'label'} = "JVMMemory";
+    $ReturnPerf{'value'} = $MemSize;
+    $ReturnPerf{'uom'}   = $MemUnits;
+    $np->add_perfdata( %ReturnPerf );
+    my ( $MemUsedSize, $MemUsedUnits, $MemUsedPercent );
+    if ( $JSONObj->{'jvm'}{'memory'}{'used'} =~ m/([^ ]+) ([^ ]+) \(%(.+?)\)/ )
+    { #59.3 MB (%12.1)
+        ( $MemUsedSize, $MemUsedUnits, $MemUsedPercent ) = ( $1, $2, $3 );
+    }
+    else {
+        $np->nagios_die( "JVM Memory not found" );
+    }
+    $ReturnPerf{'label'} = "JVMMemoryUsed";
+    $ReturnPerf{'value'} = $MemUsedSize;
+    $ReturnPerf{'uom'}   = $MemUsedUnits;
+    $np->add_perfdata( %ReturnPerf );
+    $ReturnPerf{'label'} = "PercentUsed";
+    $ReturnPerf{'value'} = $MemUsedPercent;
+    $ReturnPerf{'uom'}   = '%';
+    $np->add_perfdata( %ReturnPerf );
+
+    my $NagReturn = "OK";
+    if ($warning) {
+        if ( $MemUsedPercent > $warning ) {
+            $NagReturn = "WARNING";
+        }
+    }
+    if ($critical) {
+        if ( $MemUsedPercent > $critical ) {
+            $NagReturn = "CRITICAL";
+        }
+    }
+
+    $np->nagios_exit(
+        $NagReturn,
+        "JVM Memory Total $MemSize $MemUnits, JVM Memory Used $MemUsedSize $MemUsedUnits, Percentage Used $MemUsedPercent\%"
+    );
+}
+
+sub APIContent {
+    my $URI = $_[0];
+    my $ua  = LWP::UserAgent->new;
+    $ua->agent( "Opsview" );
+
+    # Create a request
+    my $req = HTTP::Request->new(
+        GET => "$url_prefix:$port$URI"
+    );
+    $req->content_type( 'application/x-www-form-urlencoded' );
+    $req->content( 'query=libwww-perl&mode=dist' );
+    my $res = $ua->request($req);
+
+    if ( $res->is_success ) {
+        my $containers = decode_json( $res->content );
+        return $containers;
+    }
+    else {
+        $np->nagios_die(
+            "Error returned from Solr API: " . $res->status_line . ""
+        );
+    }
+}
+
+sub DecodeSize {
+    if ( $_[0] > 1024 ) { #in the order of Bytes
+        if ( ( $_[0] / 1024 ) > 1024 ) { #in the order of KB
+            if ( ( ( $_[0] / 1024 ) / 1024 ) > 1024 ) { #in the order of MB
+                return (
+                    sprintf( "%.2f", ( ( ( $_[0] / 1024 ) / 1024 ) / 1024 ) ),
+                    'GB' );
+            }
+            else {
+                return ( sprintf( "%.2f", ( ( $_[0] / 1024 ) / 1024 ) ), 'MB'
+                );
+            }
+        }
+        else {
+            return ( sprintf( "%.2f", ( $_[0] / 1024 ) ), 'KB' );
+        }
+    }
+    else {
+        return ( $_[0], 'Bytes' );
+    }
+}
+
