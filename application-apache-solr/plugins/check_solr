@@ -1,24 +1,15 @@
 #!/usr/bin/perl
 #
-# Copyright (C) 2003-2018 Opsview Limited. All rights reserved
-#  
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-# 
-#    http://www.apache.org/licenses/LICENSE-2.0
-# 
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# AUTHORS:
+#	Copyright (C) 2003-2018 Opsview Limited. All rights reserved
+#
+#	 This file is part of Opsview
 #
 # Solr Plugin for use with Opsview.
 
 use warnings;
 use strict;
-use lib "/usr/local/nagios/perl/lib", "/usr/local/nagios/lib";
+use lib "/opt/opsview/perl/lib/perl5", "/opt/opsview/monitoringscripts/lib";
 use LWP::UserAgent;
 use Monitoring::Plugin qw(OK UNKNOWN %ERRORS %STATUS_TEXT);
 use JSON;
