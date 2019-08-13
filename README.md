@@ -9,22 +9,23 @@ Opsview Monitor contains all the performance metrics needed to monitor and keep 
 
 ## Service Checks
 
-| Service Check |
-|:------------- |
-| JVM memory |
-| System memory |
-| System load average |
-| System swap |
-| Uptime |
+| Service Check | Description |
+|:------------- |:----------- |
+| JVM memory | JVM Total Memory, Memory Used and Percentage Used. Warning and Critical thresholds are applied to the Percentage Used. |
+| System memory | Total Physical Memory, Physical Memory Used and Percentage Used. Warning and Critical thresholds are applied to the Percentage Used. |
+| System load average | The System Load Averages. |
+| System swap | Total Swap, Swap Used and Percentage Used. Warning and Critical thresholds are applied to the Percentage Used. |
+| Uptime | The JVM Uptime. No Warning or Critical threholds. |
 
 ## Setup and Configuration
 
-To configure and utilize this Opspack, you simply need to add the 'Application - Apache Solr' Opspack your Opsview Monitor system.
+To configure and utilize this Opspack, you simply need to add the 'Application - Apache Solr' Opspack to your Opsview Monitor system.
 
-Step 1: Add the host template
+#### Step 1: Add the Host Template
+Add the **Application - Apache HTTP Server** Host Template to your Opsview Monitor host.
 
-![Add Opspack to host](/docs/img/add_apache_solr_host.png?raw=true)
+> For more information, refer to [Opsview Knowledge Center - Adding Host Templates to Hosts](https://knowledge.opsview.com/docs/host#section-host-templates).
 
-Step 2: Reload and the system will now be monitored
+#### Step 2: Apply changes and the system will now be monitored
 
-![View host service checks](/docs/img/view_apache_solr_service_checks.png?raw=true)
+![View host service checks](docs/img/output.png?raw=true)
